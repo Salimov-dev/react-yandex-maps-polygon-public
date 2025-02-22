@@ -1,14 +1,16 @@
-import {
-  Circle,
-  Map,
-  Placemark,
-  Polygon,
-  useYMaps
-} from "@pbe/react-yandex-maps";
+import { Circle, Map, Polygon } from "@pbe/react-yandex-maps";
 import { useState } from "react";
-import { Button, Divider, Flex, Typography } from "antd";
+import {
+  Button,
+  ColorPicker,
+  Divider,
+  Flex,
+  Input,
+  Modal,
+  Typography
+} from "antd";
 import styled from "styled-components";
-import { IGeocodeResult } from "yandex-maps";
+import { v4 } from "uuid";
 
 type CoordinatesType = Array<number>;
 
@@ -16,9 +18,23 @@ interface IMapClickEvent {
   get: (key: string) => CoordinatesType;
 }
 
-interface IAddress {
-  location: string;
-  route: string;
+interface IGeometry {
+  getCoordinates: () => CoordinatesType;
+}
+
+interface IPlacemark {
+  geometry: IGeometry;
+}
+
+interface IDragEvent {
+  get: (key: string) => IPlacemark;
+}
+
+interface IPolygons {
+  id: string;
+  coords: CoordinatesType[];
+  name: string;
+  color: string;
 }
 
 const CardWithGeocodeMap = styled(Flex)`
@@ -57,14 +73,19 @@ const ControlButtons = styled(Flex)`
 
 const CENTER = [59.94077030138753, 30.31197058944388];
 const ZOOM = 12;
+const DEFAULT_POLYGON_COLOR = "#32CD32";
 
 const GeocodeMap = () => {
   const [polygonCoords, setPolygonCoords] = useState<CoordinatesType[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [polygonName, setPolygonName] = useState("");
+  const [polygonColor, setPolygonColor] = useState(DEFAULT_POLYGON_COLOR);
+  const [polygons, setPolygons] = useState<IPolygons[]>([]);
+  console.log("polygons", polygons);
 
-  const ymaps = useYMaps(["geocode"]);
-
+  // Хэндлер для обработки клика по карте
   const handleClickMap = (e: IMapClickEvent) => {
     if (!isDrawing && !isEditing) {
       return;
@@ -83,24 +104,38 @@ const GeocodeMap = () => {
     }
   };
 
+  // Хэндлер для сохранения нового полигона
+  const handleSaveNewPolygon = () => {
+    const newPolygon = {
+      id: v4(),
+      coords: polygonCoords,
+      name: polygonName,
+      color: polygonColor
+    };
+
+    setPolygons((prev) => [...prev, newPolygon]);
+  };
+
+  // Хэндлеры для создания полигона
   const handleStartDrawing = () => {
     setPolygonCoords([]);
     setIsDrawing(true);
   };
-
   const handleFinishDrawing = () => {
     setIsDrawing(false);
+    handleSaveNewPolygon();
   };
 
+  // Хэндлеры для редактирования полигона
   const handleStartEditing = () => {
     setIsEditing(true);
   };
-
   const handleFinishEditing = () => {
     setIsEditing(false);
   };
 
-  const handleDragPoint = (index: number, event) => {
+  // Хэндлер для перемещения точек
+  const handleDragPoint = (index: number, event: IDragEvent) => {
     const newCoords = event.get("target").geometry.getCoordinates();
 
     setPolygonCoords((prev) => {
@@ -172,6 +207,28 @@ const GeocodeMap = () => {
     return Math.sqrt(dx * dx + dy * dy);
   };
 
+  // Хэндел для очистки формы модального окна
+  const handleClearModalData = () => {
+    setPolygonName("");
+    setPolygonColor(DEFAULT_POLYGON_COLOR);
+  };
+
+  // Хэндлеры для работы с модальным окном
+  const showModal = () => {
+    setIsModalOpen(true);
+  };
+
+  const handleOk = () => {
+    setIsModalOpen(false);
+    handleClearModalData();
+  };
+
+  const handleCancelModal = () => {
+    setIsModalOpen(false);
+    handleFinishDrawing();
+    handleClearModalData();
+  };
+
   return (
     <CardWithGeocodeMap>
       <CardWithMapWrapper>
@@ -182,7 +239,10 @@ const GeocodeMap = () => {
           <Divider />
           <ControlButtons>
             <Button
-              onClick={handleStartDrawing}
+              onClick={() => {
+                handleStartDrawing();
+                showModal();
+              }}
               disabled={isDrawing || isEditing}
             >
               Начать рисование
@@ -232,11 +292,29 @@ const GeocodeMap = () => {
                 strokeWidth: 3,
                 draggable: isEditing
               }}
-              onDrag={(e) => handleDragPoint(index, e)}
+              onDrag={(e: IDragEvent) => handleDragPoint(index, e)}
             />
           ))}
         </MapWithGeocode>
       </CardWithMapWrapper>
+
+      <Modal
+        title="Задайте имя и цвет полигона"
+        open={isModalOpen}
+        onOk={handleOk}
+        onCancel={handleCancelModal}
+      >
+        <Input
+          placeholder="Имя полигона"
+          value={polygonName}
+          onChange={(e) => setPolygonName(e.target.value)}
+          style={{ marginBottom: "10px" }}
+        />
+        <ColorPicker
+          value={polygonColor}
+          onChange={(e) => setPolygonColor(e.toHexString())}
+        />
+      </Modal>
     </CardWithGeocodeMap>
   );
 };
