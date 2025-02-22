@@ -1,5 +1,6 @@
 import { Circle, Map, Polygon } from "@pbe/react-yandex-maps";
 import { useState } from "react";
+import { v4 } from "uuid";
 import {
   Button,
   ColorPicker,
@@ -7,10 +8,10 @@ import {
   Flex,
   Input,
   Modal,
+  Select,
   Typography
 } from "antd";
 import styled from "styled-components";
-import { v4 } from "uuid";
 
 type CoordinatesType = Array<number>;
 
@@ -83,7 +84,13 @@ const GeocodeMap = () => {
   const [polygonName, setPolygonName] = useState("");
   const [polygonColor, setPolygonColor] = useState(DEFAULT_POLYGON_COLOR);
   const [polygons, setPolygons] = useState<IPolygons[]>([]);
-  console.log("polygons", polygons);
+  const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(
+    null
+  );
+
+  const selectedPolygon = polygons.find(
+    (poly) => poly.id === selectedPolygonId
+  );
 
   // Хэндлер для обработки клика по карте
   const handleClickMap = (e: IMapClickEvent) => {
@@ -99,7 +106,7 @@ const GeocodeMap = () => {
 
     if (isDrawing) {
       setPolygonCoords((prev) => [...prev, coords]);
-    } else if (isEditing) {
+    } else if (isEditing && selectedPolygonId) {
       insertPointOnPolygon(coords);
     }
   };
@@ -114,6 +121,7 @@ const GeocodeMap = () => {
     };
 
     setPolygons((prev) => [...prev, newPolygon]);
+    setPolygonCoords([]);
   };
 
   // Хэндлеры для создания полигона
@@ -128,7 +136,9 @@ const GeocodeMap = () => {
 
   // Хэндлеры для редактирования полигона
   const handleStartEditing = () => {
-    setIsEditing(true);
+    if (selectedPolygonId) {
+      setIsEditing(true);
+    }
   };
   const handleFinishEditing = () => {
     setIsEditing(false);
@@ -136,23 +146,39 @@ const GeocodeMap = () => {
 
   // Хэндлер для перемещения точек
   const handleDragPoint = (index: number, event: IDragEvent) => {
+    if (!isEditing || !selectedPolygonId) {
+      return;
+    }
+
     const newCoords = event.get("target").geometry.getCoordinates();
 
-    setPolygonCoords((prev) => {
-      const updatedCoords = [...prev];
-      updatedCoords[index] = newCoords;
-      return [...updatedCoords];
-    });
+    setPolygons((prev) =>
+      prev.map((poly) =>
+        poly.id === selectedPolygonId
+          ? {
+              ...poly,
+              coords: poly.coords.map((coord, i) =>
+                i === index ? newCoords : coord
+              )
+            }
+          : poly
+      )
+    );
   };
 
   // ФУНКЦИИ ДЛЯ ДОБАВЛЕНИЯ НОВЫХ ТОЧЕК
   const insertPointOnPolygon = (clickCoords: CoordinatesType) => {
+    if (!selectedPolygonId || !selectedPolygon) {
+      return;
+    }
+
     let minDistance = Infinity;
     let insertIndex = -1;
 
-    for (let i = 0; i < polygonCoords.length; i++) {
-      const p1 = polygonCoords[i];
-      const p2 = polygonCoords[(i + 1) % polygonCoords.length];
+    for (let i = 0; i < selectedPolygon?.coords.length; i++) {
+      const p1 = selectedPolygon?.coords[i];
+      const p2 =
+        selectedPolygon?.coords[(i + 1) % selectedPolygon?.coords.length];
       const distance = pointToSegmentDistance(clickCoords, p1, p2);
 
       if (distance < minDistance) {
@@ -162,11 +188,20 @@ const GeocodeMap = () => {
     }
 
     if (insertIndex !== -1) {
-      setPolygonCoords((prev) => {
-        const newCoords = [...prev];
-        newCoords.splice(insertIndex, 0, clickCoords);
-        return newCoords;
-      });
+      setPolygons((prev) =>
+        prev.map((poly) =>
+          poly.id === selectedPolygonId
+            ? {
+                ...poly,
+                coords: [
+                  ...poly.coords.slice(0, insertIndex),
+                  clickCoords,
+                  ...poly.coords.slice(insertIndex)
+                ]
+              }
+            : poly
+        )
+      );
     }
   };
 
@@ -207,7 +242,7 @@ const GeocodeMap = () => {
     return Math.sqrt(dx * dx + dy * dy);
   };
 
-  // Хэндел для очистки формы модального окна
+  // Хэндлер для очистки формы модального окна
   const handleClearModalData = () => {
     setPolygonName("");
     setPolygonColor(DEFAULT_POLYGON_COLOR);
@@ -216,17 +251,19 @@ const GeocodeMap = () => {
   // Хэндлеры для работы с модальным окном
   const showModal = () => {
     setIsModalOpen(true);
-  };
-
-  const handleOk = () => {
-    setIsModalOpen(false);
     handleClearModalData();
   };
-
+  const handleOk = () => {
+    setIsModalOpen(false);
+  };
   const handleCancelModal = () => {
     setIsModalOpen(false);
     handleFinishDrawing();
-    handleClearModalData();
+  };
+
+  // Хэндлер для выбора полигона
+  const handleSelectPolygon = (id: string) => {
+    setSelectedPolygonId(id);
   };
 
   return (
@@ -253,13 +290,22 @@ const GeocodeMap = () => {
             <Divider />
             <Button
               onClick={handleStartEditing}
-              disabled={isEditing || isDrawing || !polygonCoords.length}
+              disabled={isEditing || isDrawing || !selectedPolygonId}
             >
               Начать редактирование
             </Button>
             <Button onClick={handleFinishEditing} disabled={!isEditing}>
               Завершить редактирование
             </Button>
+            <Divider />
+            <Select
+              placeholder="Выберите полигон"
+              onChange={(id) => handleSelectPolygon(id)}
+              options={polygons.map((poly) => ({
+                value: poly.id,
+                label: poly.name
+              }))}
+            />
           </ControlButtons>
         </LocationInfoCard>
 
@@ -270,11 +316,11 @@ const GeocodeMap = () => {
           }}
           onClick={(e: IMapClickEvent) => handleClickMap(e)}
         >
-          {polygonCoords.length > 0 && (
+          {isDrawing && polygonCoords.length > 0 && (
             <Polygon
               geometry={[polygonCoords]}
               options={{
-                fillColor: "#00FF00",
+                fillColor: polygonColor,
                 strokeColor: "#0000FF",
                 opacity: 0.5,
                 strokeWidth: 5,
@@ -282,19 +328,54 @@ const GeocodeMap = () => {
               }}
             />
           )}
-          {polygonCoords.map((coord, index) => (
-            <Circle
-              key={index}
-              geometry={[coord, isEditing ? 50 : 15]}
-              options={{
-                fillColor: "#000000",
-                strokeColor: isEditing ? "#FF0000" : "#000000",
-                strokeWidth: 3,
-                draggable: isEditing
-              }}
-              onDrag={(e: IDragEvent) => handleDragPoint(index, e)}
-            />
-          ))}
+
+          {polygons.map((poly) => {
+            return (
+              <Polygon
+                key={poly.id}
+                geometry={[poly.coords]}
+                options={{
+                  fillColor: poly.color,
+                  strokeColor:
+                    poly.id === selectedPolygonId && isEditing
+                      ? "#FF0000"
+                      : "#0000FF",
+                  opacity: 0.5,
+                  strokeWidth: 5,
+                  strokeStyle: "shortdash"
+                }}
+              />
+            );
+          })}
+
+          {isDrawing &&
+            polygonCoords.map((coord, index) => (
+              <Circle
+                key={index}
+                geometry={[coord, 15]}
+                options={{
+                  fillColor: "#000000",
+                  strokeColor: "#000000",
+                  strokeWidth: 3,
+                  draggable: false
+                }}
+              />
+            ))}
+
+          {isEditing &&
+            selectedPolygon?.coords.map((coord, index) => (
+              <Circle
+                key={index}
+                geometry={[coord, 50]}
+                options={{
+                  fillColor: "#0000FF",
+                  strokeColor: "#FF0000",
+                  strokeWidth: 3,
+                  draggable: true
+                }}
+                onDrag={(e: IDragEvent) => handleDragPoint(index, e)}
+              />
+            ))}
         </MapWithGeocode>
       </CardWithMapWrapper>
 
