@@ -1,4 +1,10 @@
-import { Circle, Map, Polygon } from "@pbe/react-yandex-maps";
+import {
+  Circle,
+  Map,
+  Placemark,
+  Polygon,
+  useYMaps
+} from "@pbe/react-yandex-maps";
 import { useState } from "react";
 import { v4 } from "uuid";
 import {
@@ -12,6 +18,7 @@ import {
   Typography
 } from "antd";
 import styled from "styled-components";
+import { IGeocodeResult } from "yandex-maps";
 
 type CoordinatesType = Array<number>;
 
@@ -37,6 +44,25 @@ interface IPolygons {
   name: string;
   color: string;
 }
+
+interface IAddress {
+  location: string;
+  route: string;
+}
+
+const AddressWithCoordinates = styled(Flex)`
+  flex-direction: column;
+`;
+
+const InfoWithPanoramaWrapper = styled(Flex)`
+  width: 100%;
+  height: 100px;
+`;
+
+const EmptyAddressMessage = styled(Typography.Title)`
+  width: 100%;
+  text-align: center;
+`;
 
 const CardWithGeocodeMap = styled(Flex)`
   width: 100%;
@@ -87,6 +113,17 @@ const GeocodeMap = () => {
   const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(
     null
   );
+  const [markerCoords, setMarkerCoords] = useState<CoordinatesType | null>(
+    null
+  );
+  const [address, setAddress] = useState<IAddress | null>(null);
+  const [deliveryStatus, setDeliveryStatus] = useState<string>("");
+
+  const ymaps = useYMaps(["geocode"]);
+
+  const formattedCoordinates = markerCoords
+    ? `${markerCoords[0]?.toFixed(6)}, ${markerCoords[1]?.toFixed(6)}`
+    : null;
 
   const selectedPolygon = polygons.find(
     (poly) => poly.id === selectedPolygonId
@@ -94,10 +131,6 @@ const GeocodeMap = () => {
 
   // Хэндлер для обработки клика по карте
   const handleClickMap = (e: IMapClickEvent) => {
-    if (!isDrawing && !isEditing) {
-      return;
-    }
-
     const coords = e.get("coords");
 
     if (!coords) {
@@ -108,8 +141,82 @@ const GeocodeMap = () => {
       setPolygonCoords((prev) => [...prev, coords]);
     } else if (isEditing && selectedPolygonId) {
       insertPointOnPolygon(coords);
+    } else {
+      setMarkerCoords(coords);
+      getAddressByCoords(coords);
+
+      const polygonContainingMarker = polygons.find((poly) =>
+        isPointInPolygon(coords, poly.coords)
+      );
+
+      if (polygonContainingMarker) {
+        setDeliveryStatus(
+          `Входит в зону доставки: ${polygonContainingMarker.name}`
+        );
+      } else {
+        setDeliveryStatus("Вне зоны доставки");
+      }
     }
   };
+
+  // Функция проверяет вхождение метки в границы полигона
+  const isPointInPolygon = (point, polygon) => {
+    const x = point[0];
+    const y = point[1];
+    let inside = false;
+
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i][0];
+      const yi = polygon[i][1];
+      const xj = polygon[j][0];
+      const yj = polygon[j][1];
+
+      const intersect =
+        yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+
+      if (intersect) inside = !inside;
+    }
+
+    return inside;
+  };
+
+  // Функция определения адреса
+  function getAddressByCoords(coords: CoordinatesType) {
+    if (!ymaps) {
+      return "Адрес не найден";
+    }
+
+    ymaps
+      ?.geocode(coords)
+      .then((result) => {
+        const foundAddress = handleGeoResult(result);
+
+        if (foundAddress) setAddress(foundAddress);
+      })
+      .catch((error: unknown) => {
+        console.log("Ошибка геокодирования", error);
+        setAddress(null);
+      });
+  }
+
+  // Функция обработки геокодирования
+  function handleGeoResult(result: IGeocodeResult) {
+    const firstGeoObject = result.geoObjects.get(0);
+
+    if (firstGeoObject) {
+      const properties = firstGeoObject.properties;
+
+      const location = String(properties.get("description", {}));
+      const route = String(properties.get("name", {}));
+
+      const foundAddress = {
+        location,
+        route
+      };
+
+      return foundAddress;
+    }
+  }
 
   // Хэндлер для сохранения нового полигона
   const handleSaveNewPolygon = () => {
@@ -270,9 +377,20 @@ const GeocodeMap = () => {
     <CardWithGeocodeMap>
       <CardWithMapWrapper>
         <LocationInfoCard>
-          <Typography.Text>
-            Здесь будет информация о координатах метки
-          </Typography.Text>
+          {address ? (
+            <InfoWithPanoramaWrapper vertical>
+              <AddressWithCoordinates>
+                <Typography.Text>{`Локация: ${address?.location}`}</Typography.Text>
+                <Typography.Text> {`Адрес: ${address?.route}`}</Typography.Text>
+                <Typography.Text>
+                  {`Координаты: ${formattedCoordinates}`}
+                </Typography.Text>
+                <Typography.Text>{deliveryStatus}</Typography.Text>
+              </AddressWithCoordinates>
+            </InfoWithPanoramaWrapper>
+          ) : (
+            <EmptyAddressMessage>Выберите точку на карте</EmptyAddressMessage>
+          )}
           <Divider />
           <ControlButtons>
             <Button
@@ -342,7 +460,8 @@ const GeocodeMap = () => {
                       : "#0000FF",
                   opacity: 0.5,
                   strokeWidth: 5,
-                  strokeStyle: "shortdash"
+                  strokeStyle: "shortdash",
+                  interactivityModel: "default#transparent"
                 }}
               />
             );
@@ -376,6 +495,8 @@ const GeocodeMap = () => {
                 onDrag={(e: IDragEvent) => handleDragPoint(index, e)}
               />
             ))}
+
+          {markerCoords && <Placemark geometry={markerCoords} />}
         </MapWithGeocode>
       </CardWithMapWrapper>
 
